@@ -28,6 +28,6 @@ static void PrintUsage()
 
           keyseal keygen
           keyseal encrypt <file> [--public-key <path>] [--replace]
-          keyseal decrypt <file.keyseal> [--output <path>] [--replace]
+          keyseal decrypt <file.keyseal> [--private-key <path>] [--output <path>] [--replace]
         """);
 }

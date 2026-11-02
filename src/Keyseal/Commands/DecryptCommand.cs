@@ -4,12 +4,13 @@ using System.Security.Cryptography;
 
 static class DecryptCommand
 {
-    const string Usage = "Usage: keyseal decrypt <file.keyseal> [--output <path>] [--replace]";
+    const string Usage = "Usage: keyseal decrypt <file.keyseal> [--private-key <path>] [--output <path>] [--replace]";
 
     public static int Run(string[] args)
     {
         string? inputFile = null;
         string? outputOption = null;
+        string? privateKeyPath = null;
         bool replace = false;
         for (int i = 0; i < args.Length; i++)
         {
@@ -17,6 +18,46 @@ static class DecryptCommand
             if (arg is "--replace")
             {
                 replace = true;
+                continue;
+            }
+
+            if (arg is "--private-key" or "-k")
+            {
+                if (privateKeyPath is not null)
+                {
+                    Console.WriteLine("Error: --private-key specified more than once.");
+                    Console.WriteLine(Usage);
+                    return 1;
+                }
+
+                if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1]))
+                {
+                    Console.WriteLine("Error: --private-key requires a path.");
+                    Console.WriteLine(Usage);
+                    return 1;
+                }
+
+                privateKeyPath = args[++i];
+                continue;
+            }
+
+            if (arg.StartsWith("--private-key=", StringComparison.Ordinal) || arg.StartsWith("-k=", StringComparison.Ordinal))
+            {
+                if (privateKeyPath is not null)
+                {
+                    Console.WriteLine("Error: --private-key specified more than once.");
+                    Console.WriteLine(Usage);
+                    return 1;
+                }
+
+                privateKeyPath = arg[(arg.IndexOf('=') + 1)..];
+                if (string.IsNullOrWhiteSpace(privateKeyPath))
+                {
+                    Console.WriteLine("Error: --private-key requires a path.");
+                    Console.WriteLine(Usage);
+                    return 1;
+                }
+
                 continue;
             }
 
@@ -96,9 +137,10 @@ static class DecryptCommand
             return 1;
         }
 
-        if (!File.Exists("private.pem"))
+        privateKeyPath ??= "private.pem";
+        if (!File.Exists(privateKeyPath))
         {
-            Console.WriteLine("Error: 'private.pem' not found in the current directory.");
+            Console.WriteLine($"Error: Private key '{privateKeyPath}' not found.");
             return 1;
         }
 
@@ -163,7 +205,7 @@ static class DecryptCommand
                 throw new InvalidDataException("Unsupported chunk size.");
 
             using var receiver = ECDiffieHellman.Create();
-            receiver.ImportFromPem(File.ReadAllText("private.pem"));
+            receiver.ImportFromPem(File.ReadAllText(privateKeyPath));
             using var ephemeral = ImportUncompressed(header.AsSpan(PublicKeyOffset, PublicKeySize));
 
             byte[] sharedSecret = receiver.DeriveRawSecretAgreement(ephemeral.PublicKey);
