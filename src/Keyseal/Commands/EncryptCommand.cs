@@ -4,17 +4,59 @@ using System.Security.Cryptography;
 
 static class EncryptCommand
 {
-    const string Usage = "Usage: keyseal encrypt <file-to-encrypt> [--replace]";
+    const string Usage = "Usage: keyseal encrypt <file-to-encrypt> [--public-key <path>] [--replace]";
 
     public static int Run(string[] args)
     {
         string? inputFile = null;
+        string? publicKeyPath = null;
         bool replace = false;
-        foreach (string arg in args)
+        for (int i = 0; i < args.Length; i++)
         {
+            string arg = args[i];
             if (arg is "--replace")
             {
                 replace = true;
+                continue;
+            }
+
+            if (arg is "--public-key" or "-k")
+            {
+                if (publicKeyPath is not null)
+                {
+                    Console.WriteLine("Error: --public-key specified more than once.");
+                    Console.WriteLine(Usage);
+                    return 1;
+                }
+
+                if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1]))
+                {
+                    Console.WriteLine("Error: --public-key requires a path.");
+                    Console.WriteLine(Usage);
+                    return 1;
+                }
+
+                publicKeyPath = args[++i];
+                continue;
+            }
+
+            if (arg.StartsWith("--public-key=", StringComparison.Ordinal) || arg.StartsWith("-k=", StringComparison.Ordinal))
+            {
+                if (publicKeyPath is not null)
+                {
+                    Console.WriteLine("Error: --public-key specified more than once.");
+                    Console.WriteLine(Usage);
+                    return 1;
+                }
+
+                publicKeyPath = arg[(arg.IndexOf('=') + 1)..];
+                if (string.IsNullOrWhiteSpace(publicKeyPath))
+                {
+                    Console.WriteLine("Error: --public-key requires a path.");
+                    Console.WriteLine(Usage);
+                    return 1;
+                }
+
                 continue;
             }
 
@@ -47,9 +89,10 @@ static class EncryptCommand
             return 1;
         }
 
-        if (!File.Exists("public.pem"))
+        publicKeyPath ??= "public.pem";
+        if (!File.Exists(publicKeyPath))
         {
-            Console.WriteLine("Error: 'public.pem' not found in the current directory.");
+            Console.WriteLine($"Error: Public key '{publicKeyPath}' not found.");
             return 1;
         }
 
@@ -100,7 +143,7 @@ static class EncryptCommand
         const int PublicKeyOffset = 50;
         ReadOnlySpan<byte> info = "E1GC-v1 P-256 HKDF-SHA256 AES-256-GCM"u8;
 
-        string publicKeyPem = File.ReadAllText("public.pem");
+        string publicKeyPem = File.ReadAllText(publicKeyPath);
         using var receiverPublicKey = ECDiffieHellman.Create();
         receiverPublicKey.ImportFromPem(publicKeyPem);
 

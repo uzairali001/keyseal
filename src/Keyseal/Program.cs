@@ -27,7 +27,7 @@ static void PrintUsage()
         keyseal — encrypt a file for a recipient public key
 
           keyseal keygen
-          keyseal encrypt <file> [--replace]
+          keyseal encrypt <file> [--public-key <path>] [--replace]
           keyseal decrypt <file.keyseal> [--output <path>] [--replace]
         """);
 }
