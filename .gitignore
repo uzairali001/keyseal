@@ -1,0 +1,9 @@
+bin/
+obj/
+.vs/
+*.user
+*.pem
+*.keyseal
+*.partial
+TestResults/
+artifacts/

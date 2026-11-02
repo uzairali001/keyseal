@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <RootNamespace>Keyseal</RootNamespace>
+    <AssemblyName>keyseal</AssemblyName>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>keyseal</ToolCommandName>
+    <PackageId>keyseal</PackageId>
+    <Version>0.1.0</Version>
+    <Description>Encrypt and decrypt files for a recipient using P-256 and AES-256-GCM.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <InternalsVisibleTo Include="Keyseal.Tests" />
+  </ItemGroup>
+
+</Project>

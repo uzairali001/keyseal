@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Keyseal/Keyseal.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Keyseal.Tests/Keyseal.Tests.csproj" />
+  </Folder>
+</Solution>
