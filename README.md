@@ -6,7 +6,7 @@ Each sealed file gets its own ephemeral P-256 key. keyseal agrees a shared secre
 
 ## Install
 
-keyseal is a [.NET](https://dotnet.microsoft.com/download) tool and needs the .NET 11 SDK.
+keyseal is a [.NET](https://dotnet.microsoft.com/download) tool and needs the .NET 10 SDK or a newer .NET SDK.
 
 ```bash
 dotnet tool install --global keyseal
@@ -153,4 +153,4 @@ dotnet build
 dotnet test
 ```
 
-After `dotnet build -c Release`, the program is `src/Keyseal/bin/Release/net11.0/keyseal` (`keyseal.exe` on Windows). Pack the .NET tool with `dotnet pack src/Keyseal -c Release`.
+After `dotnet build -c Release`, the program is `src/Keyseal/bin/Release/net10.0/keyseal` (`keyseal.exe` on Windows). Pack the .NET tool with `dotnet pack src/Keyseal -c Release`.
