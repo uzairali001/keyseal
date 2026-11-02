@@ -56,7 +56,7 @@ Running `keyseal` with no command, or with `help`, `-h`, or `--help`, prints the
 ### keyseal keygen
 
 ```text
-keyseal keygen
+keyseal keygen [--force]
 ```
 
 Creates a new NIST P-256 key pair and writes:
@@ -66,7 +66,7 @@ Creates a new NIST P-256 key pair and writes:
 | `public.pem` | SubjectPublicKeyInfo PEM | Anyone who should be able to encrypt for you |
 | `private.pem` | Unencrypted PKCS#8 PEM | Only you |
 
-`keygen` takes no options. If `private.pem` or `public.pem` already exists in the current directory, it overwrites that file. Move a key you still need before generating another pair in the same directory.
+If `private.pem` or `public.pem` already exists in the current directory, `keygen` stops and leaves both files unchanged. Pass `--force` to replace them. A key that is replaced this way cannot be recovered, and files already encrypted for it can no longer be decrypted.
 
 ### keyseal encrypt
 

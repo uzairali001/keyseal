@@ -2,11 +2,43 @@ using System.Security.Cryptography;
 
 static class KeygenCommand
 {
+    const string Usage = "Usage: keyseal keygen [--force]";
+
     public static int Run(string[] args)
     {
-        if (args.Length > 0)
+        bool force = false;
+        foreach (string arg in args)
         {
-            Console.WriteLine("Usage: keyseal keygen");
+            if (arg is "--force")
+            {
+                if (force)
+                {
+                    Console.WriteLine("Error: --force specified more than once.");
+                    Console.WriteLine(Usage);
+                    return 1;
+                }
+
+                force = true;
+                continue;
+            }
+
+            Console.WriteLine($"Error: Unknown option '{arg}'.");
+            Console.WriteLine(Usage);
+            return 1;
+        }
+
+        const string PrivateKeyPath = "private.pem";
+        const string PublicKeyPath = "public.pem";
+        bool privateExists = File.Exists(PrivateKeyPath);
+        bool publicExists = File.Exists(PublicKeyPath);
+        if (!force && (privateExists || publicExists))
+        {
+            string existing = privateExists && publicExists
+                ? $"'{PrivateKeyPath}' and '{PublicKeyPath}' already exist"
+                : privateExists
+                    ? $"'{PrivateKeyPath}' already exists"
+                    : $"'{PublicKeyPath}' already exists";
+            Console.WriteLine($"Error: {existing}. Pass --force to overwrite.");
             return 1;
         }
 
@@ -16,8 +48,8 @@ static class KeygenCommand
         string privateKeyPem = ecdh.ExportPkcs8PrivateKeyPem();
         string publicKeyPem = ecdh.ExportSubjectPublicKeyInfoPem();
 
-        File.WriteAllText("private.pem", privateKeyPem);
-        File.WriteAllText("public.pem", publicKeyPem);
+        File.WriteAllText(PrivateKeyPath, privateKeyPem);
+        File.WriteAllText(PublicKeyPath, publicKeyPem);
 
         Console.WriteLine("Success! Saved 'private.pem' and 'public.pem'.");
         Console.WriteLine("Send 'public.pem' to your friend.");

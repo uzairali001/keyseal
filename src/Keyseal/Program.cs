@@ -26,7 +26,7 @@ static void PrintUsage()
     Console.WriteLine("""
         keyseal — encrypt a file for a recipient public key
 
-          keyseal keygen
+          keyseal keygen [--force]
           keyseal encrypt <file> [--public-key <path>] [--replace]
           keyseal decrypt <file.keyseal> [--private-key <path>] [--output <path>] [--replace]
         """);
