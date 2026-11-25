@@ -1,6 +1,6 @@
 # keyseal
 
-keyseal encrypts a file so that only the holder of a matching private key can read it. You encrypt with the recipient’s public key. They decrypt with their private key. The private key never has to leave their machine.
+keyseal encrypts a file or a folder so that only the holder of a matching private key can read it. You encrypt with the recipient’s public key. They decrypt with their private key. The private key never has to leave their machine. A folder is zipped while it is encrypted, so the archive is not written to disk in the clear.
 
 Each sealed file gets its own ephemeral P-256 key. keyseal agrees a shared secret with the recipient’s public key, derives an AES-256 key with HKDF-SHA256, and encrypts the file in 1 MiB chunks with AES-256-GCM. The file is streamed, so a large input is not loaded into memory all at once. A truncated or altered file fails authentication and is not written out as plaintext.
 
@@ -71,16 +71,16 @@ If `private.pem` or `public.pem` already exists in the current directory, `keyge
 ### keyseal encrypt
 
 ```text
-keyseal encrypt <file> [--public-key <path>] [--replace]
+keyseal encrypt <file-or-folder> [--public-key <path>] [--replace]
 ```
 
 | Argument | Meaning |
 | --- | --- |
-| `<file>` | File to encrypt. |
+| `<file-or-folder>` | File or directory to encrypt. A directory is packed into a zip as it is encrypted. |
 | `--public-key <path>`, `-k <path>` | Recipient public key. Defaults to `public.pem`. `--public-key=<path>` and `-k=<path>` are accepted. |
 | `--replace` | Overwrite `<file>.keyseal` when it already exists. |
 
-The sealed file is always `<file>.keyseal`. keyseal refuses to replace an existing sealed file unless `--replace` is set. On failure, a partially written output is deleted. With `--replace`, the existing sealed file is replaced only after the new file has been written in full.
+The sealed file is always `<path>.keyseal`. keyseal refuses to replace an existing sealed file unless `--replace` is set. On failure, a partially written output is deleted. With `--replace`, the existing sealed file is replaced only after the new file has been written in full. Directory entries that are links are refused. The zip stores paths relative to the directory you named.
 
 ### keyseal decrypt
 
@@ -95,15 +95,15 @@ keyseal decrypt <file> [--private-key <path>] [--output <path>] [--replace]
 | `--output <path>`, `-o <path>` | Where to write the plaintext. `--output=<path>` and `-o=<path>` are accepted. |
 | `--replace` | Overwrite the output when it already exists. |
 
-Without `--output`, a name that ends in `.keyseal` has that suffix removed (`notes.txt.keyseal` becomes `notes.txt`). Any other name gets `.dec` appended.
+Without `--output`, a name that ends in `.keyseal` has that suffix removed (`notes.txt.keyseal` becomes `notes.txt`). Any other name gets `.dec` appended. A sealed folder is restored as a directory at that path. A sealed zip file is restored as a zip file, not unpacked.
 
-If `--output` is an existing directory, or the path ends in a slash, keyseal writes the default file name inside that directory. Parent directories of the output path are created when they are missing.
+If `--output` is an existing directory, or the path ends in a slash, and the payload is a file, keyseal writes the default file name inside that directory. Parent directories of a file output path are created when they are missing. When the payload is a folder, `--output` is the directory to create. An existing output file or non-empty directory is left unchanged unless `--replace` is set.
 
 Decryption failure prints one of these and leaves no plaintext behind:
 
 - `Decryption failed. The file was modified, or it was encrypted for a different key.` The authentication check failed.
 - `Error: Encrypted file is truncated.` The file ended before a complete, final chunk.
-- `Error: Unrecognized container. Expected an E1GC v1 file.` The file is not a keyseal container this version can read.
+- `Error: Unrecognized container. Expected an E1GC v1 or v2 file.` The file is not a keyseal container this version can read.
 
 ## Protect the private key
 
@@ -113,7 +113,7 @@ Decryption failure prints one of these and leaves no plaintext behind:
 - A public key only lets someone encrypt. Confirm you are encrypting for the person you mean to, because keyseal does not check who a public key belongs to.
 - Anyone who has the public key can create a sealed file that decrypts with the matching private key. keyseal does not identify the sender.
 - The sealed name is the original file name plus `.keyseal`. Encrypt a copy under another name first when the file name itself is sensitive.
-- keyseal encrypts one file per invocation. It does not walk directories.
+- Encrypting a directory records that it was a directory. Decrypting a `.zip` you encrypted as a file gives you that zip back.
 
 ## File format
 
@@ -124,7 +124,7 @@ Header, 115 bytes:
 | Offset | Size | Field |
 | --- | --- | --- |
 | 0 | 4 | Magic `E1GC` |
-| 4 | 1 | Version, `1` |
+| 4 | 1 | Version, `1` or `2`. New files are version `2` |
 | 5 | 1 | Suite, `1` (P-256, HKDF-SHA256, AES-256-GCM) |
 | 6 | 4 | Chunk size, currently 1 MiB (`1048576`) |
 | 10 | 32 | HKDF salt |
@@ -141,6 +141,8 @@ Each chunk follows the header:
 | length | Ciphertext |
 
 The additional authenticated data for each chunk is the header, then the chunk index (`u32`), the last-chunk flag (`u8`), and the ciphertext length (`u32`). A file that ends on a chunk whose flag is `0`, or that has bytes after the chunk whose flag is `1`, is rejected. Every chunk before the last one is exactly the header’s chunk size. The last chunk may be shorter, including empty.
+
+Version `1` plaintext is the original file. Version `2` plaintext is one kind byte followed by the payload. Kind `1` is the original file. Kind `2` is a zip of a directory, with entry names relative to that directory. Decrypt uses the kind byte to choose a file or a directory, so an encrypted `.zip` file is not unpacked. Version `1` files still decrypt as files.
 
 The AES-256 key is HKDF-SHA256 over the raw P-256 shared secret. The salt is the header salt. The info string is `E1GC-v1 P-256 HKDF-SHA256 AES-256-GCM`. The ephemeral private key is discarded after the shared secret is derived.
 

@@ -1,10 +1,14 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.IO.Compression;
+using System.IO.Pipes;
 using System.Security.Cryptography;
 
 static class EncryptCommand
 {
-    const string Usage = "Usage: keyseal encrypt <file-to-encrypt> [--public-key <path>] [--replace]";
+    const byte PayloadFile = 1;
+    const byte PayloadFolder = 2;
+    const string Usage = "Usage: keyseal encrypt <file-or-folder> [--public-key <path>] [--replace]";
 
     public static int Run(string[] args)
     {
@@ -83,9 +87,10 @@ static class EncryptCommand
             return 1;
         }
 
-        if (!File.Exists(inputFile))
+        bool inputIsDirectory = Directory.Exists(inputFile);
+        if (!inputIsDirectory && !File.Exists(inputFile))
         {
-            Console.WriteLine($"Error: Input file '{inputFile}' not found.");
+            Console.WriteLine($"Error: Input '{inputFile}' not found.");
             return 1;
         }
 
@@ -96,7 +101,10 @@ static class EncryptCommand
             return 1;
         }
 
-        string outputFile = inputFile + ".keyseal";
+        string sealedName = inputIsDirectory
+            ? Path.TrimEndingDirectorySeparator(inputFile) + ".keyseal"
+            : inputFile + ".keyseal";
+        string outputFile = sealedName;
         string writePath = outputFile;
         bool replacing = false;
         if (File.Exists(outputFile))
@@ -116,7 +124,8 @@ static class EncryptCommand
         // Container layout (little-endian), magic "E1GC":
         //   header (115 bytes):
         //     char[4]  magic = E1GC
-        //     u8       version = 1
+        //     u8       version = 2     plaintext is kind || payload
+        //                              kind 1 = file bytes, kind 2 = folder zip
         //     u8       suite = 1           P-256, HKDF-SHA256, AES-256-GCM
         //     u32      chunkSize
         //     byte[32] hkdfSalt
@@ -150,7 +159,7 @@ static class EncryptCommand
         using var ephemeral = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
         byte[] header = new byte[HeaderSize];
         "E1GC"u8.CopyTo(header);
-        header[VersionOffset] = 1;
+        header[VersionOffset] = 2;
         header[SuiteOffset] = 1;
         BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(ChunkSizeOffset), ChunkSize);
         RandomNumberGenerator.Fill(header.AsSpan(SaltOffset, SaltSize));
@@ -171,14 +180,14 @@ static class EncryptCommand
         FileStream? output = null;
         bool created = false;
         bool success = false;
+        Task? folderWriter = null;
         byte[] plainA = ArrayPool<byte>.Shared.Rent(ChunkSize);
         byte[] plainB = ArrayPool<byte>.Shared.Rent(ChunkSize);
         byte[] cipher = ArrayPool<byte>.Shared.Rent(ChunkSize);
         try
         {
             using var aes = new AesGcm(aesKey, TagSize);
-            using var input = new FileStream(
-                inputFile, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, FileOptions.SequentialScan);
+            using Stream input = OpenPlaintext(inputFile, inputIsDirectory, out folderWriter);
             output = new FileStream(
                 writePath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 128 * 1024, FileOptions.SequentialScan);
             created = true;
@@ -225,13 +234,27 @@ static class EncryptCommand
 
             output.Dispose();
             output = null;
+            input.Dispose();
+            if (folderWriter is not null)
+            {
+                try
+                {
+                    folderWriter.GetAwaiter().GetResult();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error: {ex.GetBaseException().Message}");
+                    return 1;
+                }
+            }
+
             if (replacing)
                 File.Move(writePath, outputFile, overwrite: true);
             created = false;
             success = true;
             Console.WriteLine("Encryption complete!");
             Console.WriteLine($"Generated: {outputFile}");
-            Console.WriteLine($"Plaintext bytes: {input.Length}");
+            Console.WriteLine(inputIsDirectory ? "Source: folder" : $"Plaintext bytes: {new FileInfo(inputFile).Length}");
             return 0;
         }
         finally
@@ -245,8 +268,96 @@ static class EncryptCommand
             ArrayPool<byte>.Shared.Return(cipher);
             if (created && !success)
                 File.Delete(writePath);
+            if (folderWriter is { IsCompleted: false } or { IsFaulted: true })
+            {
+                try
+                {
+                    folderWriter.GetAwaiter().GetResult();
+                }
+                catch (Exception ex)
+                {
+                    if (success)
+                        Console.WriteLine($"Error: {ex.GetBaseException().Message}");
+                }
+            }
         }
     }
+
+    static Stream OpenPlaintext(string inputPath, bool isDirectory, out Task? folderWriter)
+    {
+        if (!isDirectory)
+        {
+            folderWriter = null;
+            var file = new FileStream(
+                inputPath, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, FileOptions.SequentialScan);
+            return new PrefixStream(PayloadFile, file);
+        }
+
+        var pipe = new AnonymousPipeServerStream(PipeDirection.Out, HandleInheritability.None);
+        var reader = new AnonymousPipeClientStream(PipeDirection.In, pipe.ClientSafePipeHandle);
+        folderWriter = Task.Run(() =>
+        {
+            try
+            {
+                using (pipe)
+                using (var zip = new ZipArchive(pipe, ZipArchiveMode.Create, leaveOpen: true))
+                    WriteFolder(zip, Path.TrimEndingDirectorySeparator(inputPath));
+            }
+            catch
+            {
+                pipe.Dispose();
+                throw;
+            }
+        });
+        return new PrefixStream(PayloadFolder, reader);
+    }
+
+    static void WriteFolder(ZipArchive zip, string root)
+    {
+        var pendingDirectories = new Stack<string>();
+        pendingDirectories.Push(root);
+        while (pendingDirectories.Count > 0)
+        {
+            string directory = pendingDirectories.Pop();
+            bool hasChild = false;
+            foreach (string child in Directory.EnumerateDirectories(directory))
+            {
+                if (IsReparsePoint(child))
+                    throw new IOException($"Refusing to follow a link: {child}");
+                hasChild = true;
+                pendingDirectories.Push(child);
+            }
+
+            foreach (string file in Directory.EnumerateFiles(directory))
+            {
+                if (IsReparsePoint(file))
+                    throw new IOException($"Refusing to follow a link: {file}");
+                hasChild = true;
+                string name = RelativeEntryName(root, file);
+                ZipArchiveEntry entry = zip.CreateEntry(name, CompressionLevel.Optimal);
+                entry.LastWriteTime = File.GetLastWriteTime(file);
+                using Stream entryStream = entry.Open();
+                using var source = new FileStream(
+                    file, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, FileOptions.SequentialScan);
+                source.CopyTo(entryStream);
+            }
+
+            if (!hasChild && !string.Equals(directory, root, StringComparison.OrdinalIgnoreCase))
+            {
+                string name = RelativeEntryName(root, directory) + "/";
+                zip.CreateEntry(name);
+            }
+        }
+    }
+
+    static string RelativeEntryName(string root, string path)
+    {
+        string relative = Path.GetRelativePath(root, path);
+        return relative.Replace('\\', '/');
+    }
+
+    static bool IsReparsePoint(string path) =>
+        (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
 
     static int ReadAtMost(Stream stream, byte[] buffer, int count)
     {
@@ -277,5 +388,59 @@ static class EncryptCommand
 
         destination.Clear();
         source.CopyTo(destination[(destination.Length - source.Length)..]);
+    }
+
+    sealed class PrefixStream : Stream
+    {
+        readonly byte _prefix;
+        readonly Stream _inner;
+        bool _prefixPending = true;
+
+        public PrefixStream(byte prefix, Stream inner)
+        {
+            _prefix = prefix;
+            _inner = inner;
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+        public override int Read(Span<byte> buffer)
+        {
+            int written = 0;
+            if (_prefixPending && buffer.Length > 0)
+            {
+                buffer[0] = _prefix;
+                _prefixPending = false;
+                written = 1;
+                buffer = buffer[1..];
+            }
+
+            if (buffer.Length == 0)
+                return written;
+            int inner = _inner.Read(buffer);
+            return written + inner;
+        }
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+                _inner.Dispose();
+            base.Dispose(disposing);
+        }
     }
 }

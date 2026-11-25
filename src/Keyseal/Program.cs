@@ -24,10 +24,10 @@ static int Unknown(string command)
 static void PrintUsage()
 {
     Console.WriteLine("""
-        keyseal — encrypt a file for a recipient public key
+        keyseal — encrypt a file or folder for a recipient public key
 
           keyseal keygen [--force]
-          keyseal encrypt <file> [--public-key <path>] [--replace]
+          keyseal encrypt <file-or-folder> [--public-key <path>] [--replace]
           keyseal decrypt <file.keyseal> [--private-key <path>] [--output <path>] [--replace]
         """);
 }
